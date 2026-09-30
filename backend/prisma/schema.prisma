@@ -1,0 +1,774 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════ Enums ═══════════════
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  FLEET_MANAGER
+  FLEET_USER
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum VehicleType {
+  CAR
+  SUV
+  BUS
+  TRUCK
+  VAN
+  MOTORCYCLE
+  OTHER
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum DeviceModel {
+  C003F
+  OTHER_MODEL
+}
+
+enum DeviceStatus {
+  ACTIVE
+  INACTIVE
+  OFFLINE
+  SUSPENDED
+  UNASSIGNED
+}
+
+enum ConnectionStatus {
+  ONLINE
+  OFFLINE
+  UNKNOWN
+}
+
+enum TripStatus {
+  IDLE
+  STARTING
+  ACTIVE
+  ENDING
+  COMPLETED
+  CANCELLED
+  IN_PROGRESS
+}
+
+enum AlertType {
+  OVERSPEED
+  GEOFENCE_ENTER
+  GEOFENCE_EXIT
+  IGNITION_ON
+  IGNITION_OFF
+  DEVICE_OFFLINE
+  LOW_BATTERY
+  LOW_FUEL
+  FUEL_DROP
+  SUSPICIOUS_FUEL_CHANGE
+  SOS
+  ENGINE_EVENT
+  IDLE
+  MAINTENANCE
+  CUSTOM
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  ACTIVE
+}
+
+enum GeofenceType {
+  CIRCLE
+  POLYGON
+  RECTANGLE
+}
+
+enum GeofenceEventType {
+  ENTER
+  EXIT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum InstallationStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+  EXPIRED
+  TRIALING
+}
+
+enum ReportType {
+  VEHICLE_SUMMARY
+  TRIP_HISTORY
+  TRIP_SUMMARY
+  MILEAGE
+  DISTANCE
+  SPEED_VIOLATIONS
+  OVERSPEED
+  GEOFENCE
+  GEOFENCE_EVENTS
+  ALERTS
+  FUEL
+  FUEL_USAGE
+  DEVICE_ACTIVITY
+  FLEET_ACTIVITY
+  IDLE
+}
+
+enum ReportStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  EXPIRED
+  PENDING
+}
+
+enum FuelEventType {
+  REFUEL
+  DRAIN
+  FUEL_DROP_DETECTED
+  LOW_FUEL
+  CONSUMPTION
+  REFILL
+  ANOMALY
+}
+
+enum FuelSource {
+  SENSOR
+  SIMULATOR
+  MANUAL
+  ESTIMATED
+}
+
+// ═══════════════ Organization ═══════════════
+
+model Organization {
+  id        String             @id @default(cuid())
+  name      String
+  slug      String             @unique
+  email     String?
+  phone     String?
+  address   String?
+  timezone  String             @default("Africa/Lagos")
+  currency  String             @default("NGN")
+  status    OrganizationStatus @default(ACTIVE)
+  isDemo    Boolean            @default(false)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  users          User[]
+  vehicles       Vehicle[]
+  devices        Device[]
+  deviceAssignments DeviceAssignment[]
+  telemetry      Telemetry[]
+  latestStates   VehicleLatestState[]
+  trips          Trip[]
+  alerts         Alert[]
+  alertRules     AlertRule[]
+  geofences      Geofence[]
+  geofenceEvents GeofenceEvent[]
+  fuelReadings   FuelReading[]
+  fuelEvents     FuelEvent[]
+  reports        Report[]
+  installations  Installation[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  subscriptions  Subscription[]
+  refreshTokens  RefreshToken[]
+
+  @@index([slug])
+  @@index([status])
+}
+
+model SubscriptionPlan {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String?
+  monthlyPrice Float    @default(0)
+  yearlyPrice  Float    @default(0)
+  vehicleLimit Int      @default(5)
+  userLimit    Int      @default(5)
+  features     Json?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id             String             @id @default(cuid())
+  organizationId String
+  planId         String?
+  planName       String             @default("FREE")
+  status         SubscriptionStatus @default(TRIAL)
+  startsAt       DateTime           @default(now())
+  endsAt         DateTime?
+  deviceLimit    Int                @default(5)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         SubscriptionPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model User {
+  id             String     @id @default(cuid())
+  organizationId String?
+  fullName       String
+  // Global uniqueness (documented decision): email is globally unique to
+  // simplify login. Org-scoped login can be added later without migration pain.
+  email          String     @unique
+  phone          String?
+  passwordHash   String
+  role           Role       @default(FLEET_USER)
+  status         UserStatus @default(ACTIVE)
+  lastLoginAt    DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization  Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+
+  @@index([organizationId])
+  @@index([role])
+  @@index([status])
+}
+
+model RefreshToken {
+  id             String    @id @default(cuid())
+  userId         String
+  organizationId String?
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  ipAddress      String?
+  userAgent      String?
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ═══════════════ Fleet ═══════════════
+
+model Vehicle {
+  id                 String        @id @default(cuid())
+  organizationId     String
+  name               String
+  registrationNumber String
+  make               String?
+  model              String?
+  year               Int?
+  vehicleType        VehicleType   @default(CAR)
+  color              String?
+  status             VehicleStatus @default(ACTIVE)
+  odometer           Float         @default(0)
+  isSimulated        Boolean       @default(false)
+  deletedAt          DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  devices        Device[]
+  assignments    DeviceAssignment[]
+  telemetry      Telemetry[]
+  trips          Trip[]
+  alerts         Alert[]
+  fuelReadings   FuelReading[]
+  fuelEvents     FuelEvent[]
+  latestState    VehicleLatestState?
+  geofenceEvents GeofenceEvent[]
+  installations  Installation[]
+
+  @@unique([organizationId, registrationNumber])
+  @@index([organizationId])
+  @@index([status])
+}
+
+model Device {
+  id              String       @id @default(cuid())
+  organizationId  String
+  vehicleId       String?
+  imei            String       @unique
+  model           DeviceModel  @default(C003F)
+  manufacturer    String?
+  serialNumber    String?
+  simNumber       String?
+  firmwareVersion String?
+  status          DeviceStatus @default(UNASSIGNED)
+  isSimulated     Boolean      @default(false)
+  lastSeenAt      DateTime?
+  lastLatitude    Float?
+  lastLongitude   Float?
+  deletedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle?             @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  telemetry    Telemetry[]
+  trips        Trip[]
+  assignments  DeviceAssignment[]
+  installations Installation[]
+  fuelReadings FuelReading[]
+
+  @@index([organizationId])
+  @@index([vehicleId])
+  @@index([status])
+  @@index([model])
+}
+
+// Device assignment history — never overwrite history on reassignment.
+model DeviceAssignment {
+  id             String    @id @default(cuid())
+  organizationId String
+  deviceId       String
+  vehicleId      String
+  assignedAt     DateTime  @default(now())
+  unassignedAt   DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  device       Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@index([vehicleId])
+  @@index([organizationId])
+}
+
+// ═══════════════ Telemetry ═══════════════
+
+model Telemetry {
+  id             String   @id @default(cuid())
+  deviceId       String
+  vehicleId      String?
+  organizationId String
+  // device-reported time (UTC) vs server receipt time
+  timestamp      DateTime
+  receivedAt     DateTime @default(now())
+  latitude       Float
+  longitude      Float
+  speedKph       Float    @default(0)
+  heading        Float?
+  ignition       Boolean?
+  batteryVoltage Float?
+  fuelPercentage Float?
+  fuelLiters     Float?
+  odometerKm     Float?
+  satellites     Int?
+  gsmSignal      Int?
+  engineStatus   String?
+  quality        String   @default("VALID")
+  sequenceNumber String?
+  rawData        Json?
+  // set when derived data (trips, geofences, alerts, fuel) has been produced;
+  // makes secondary processing exactly-once across queue/inline paths
+  secondaryProcessedAt DateTime?
+  createdAt      DateTime @default(now())
+
+  device       Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle?     @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, timestamp(sort: Desc)])
+  @@index([vehicleId, timestamp(sort: Desc)])
+  @@index([organizationId, timestamp(sort: Desc)])
+  @@index([timestamp(sort: Desc)])
+}
+
+// Fast dashboard reads — never scan Telemetry for "current position".
+model VehicleLatestState {
+  vehicleId        String           @id
+  organizationId   String
+  deviceId         String?
+  latitude         Float
+  longitude        Float
+  speedKph         Float            @default(0)
+  heading          Float?
+  ignition         Boolean?
+  fuelPercentage   Float?
+  batteryVoltage   Float?
+  odometerKm       Float?
+  lastTelemetryAt  DateTime?
+  connectionStatus ConnectionStatus @default(UNKNOWN)
+  updatedAt        DateTime         @updatedAt
+
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([connectionStatus])
+}
+
+// ═══════════════ Trips ═══════════════
+
+model Trip {
+  id             String     @id @default(cuid())
+  organizationId String
+  vehicleId      String
+  deviceId       String?
+  status         TripStatus @default(ACTIVE)
+  startedAt      DateTime
+  endedAt        DateTime?
+  startLatitude  Float
+  startLongitude Float
+  endLatitude    Float?
+  endLongitude   Float?
+  distanceKm     Float      @default(0)
+  gpsDistanceKm  Float      @default(0)
+  durationSeconds Int       @default(0)
+  movingDurationSeconds Int @default(0)
+  idleDurationSeconds   Int @default(0)
+  maxSpeedKph    Float      @default(0)
+  averageSpeedKph Float     @default(0)
+  startOdometerKm Float?
+  endOdometerKm   Float?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  device       Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, startedAt(sort: Desc)])
+  @@index([vehicleId, startedAt(sort: Desc)])
+  @@index([status])
+}
+
+// ═══════════════ Alerts ═══════════════
+
+model AlertRule {
+  id              String    @id @default(cuid())
+  organizationId  String
+  vehicleId       String?
+  type            AlertType
+  enabled         Boolean   @default(true)
+  configuration   Json?
+  cooldownSeconds Int       @default(600)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([vehicleId])
+  @@index([type])
+}
+
+model Alert {
+  id             String        @id @default(cuid())
+  organizationId String
+  vehicleId      String?
+  deviceId       String?
+  geofenceId     String?
+  type           AlertType
+  severity       AlertSeverity @default(WARNING)
+  status         AlertStatus   @default(OPEN)
+  title          String
+  message        String?
+  metadata       Json?
+  latitude       Float?
+  longitude      Float?
+  speedKph       Float?
+  occurredAt     DateTime      @default(now())
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+  resolvedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle?     @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  geofence     Geofence?    @relation(fields: [geofenceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, occurredAt(sort: Desc)])
+  @@index([vehicleId, occurredAt(sort: Desc)])
+  @@index([status])
+  @@index([type])
+}
+
+// ═══════════════ Geofences (PostGIS-ready) ═══════════════
+
+model Geofence {
+  id               String      @id @default(cuid())
+  organizationId   String
+  name             String
+  description      String?
+  type             GeofenceType
+  // Circle: center + radiusMeters. Polygon/Rectangle: polygon GeoJSON coords.
+  centerLatitude   Float?
+  centerLongitude  Float?
+  radiusMeters     Float?
+  polygon          Json?
+  geometry         Json?
+  active           Boolean      @default(true)
+  enterAlertEnabled Boolean     @default(true)
+  exitAlertEnabled  Boolean     @default(true)
+  deletedAt        DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  alerts       Alert[]
+  events       GeofenceEvent[]
+  states       GeofenceVehicleState[]
+
+  @@index([organizationId])
+  @@index([active])
+}
+
+model GeofenceVehicleState {
+  id         String   @id @default(cuid())
+  geofenceId String
+  vehicleId  String
+  isInside   Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+
+  geofence Geofence @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+
+  @@unique([geofenceId, vehicleId])
+}
+
+model GeofenceEvent {
+  id             String           @id @default(cuid())
+  organizationId String
+  geofenceId     String
+  vehicleId      String
+  eventType      GeofenceEventType
+  timestamp      DateTime         @default(now())
+  latitude       Float
+  longitude      Float
+  createdAt      DateTime         @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  geofence     Geofence     @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([geofenceId, timestamp(sort: Desc)])
+  @@index([vehicleId, timestamp(sort: Desc)])
+  @@index([organizationId, timestamp(sort: Desc)])
+}
+
+// ═══════════════ Fuel ═══════════════
+
+model FuelReading {
+  id             String     @id @default(cuid())
+  organizationId String
+  vehicleId      String
+  deviceId       String?
+  timestamp      DateTime
+  percentage     Float?
+  liters         Float?
+  source         FuelSource @default(SENSOR)
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  device       Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([vehicleId, timestamp(sort: Desc)])
+  @@index([organizationId, timestamp(sort: Desc)])
+}
+
+model FuelEvent {
+  id               String        @id @default(cuid())
+  organizationId   String
+  vehicleId        String
+  deviceId         String?
+  type             FuelEventType
+  timestamp        DateTime      @default(now())
+  beforePercentage Float?
+  afterPercentage  Float?
+  beforeLiters     Float?
+  afterLiters      Float?
+  metadata         Json?
+  createdAt        DateTime      @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId, timestamp(sort: Desc)])
+  @@index([organizationId, timestamp(sort: Desc)])
+}
+
+// ═══════════════ Reports (async) ═══════════════
+
+model Report {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           ReportType
+  status         ReportStatus @default(QUEUED)
+  parameters     Json?
+  fileUrl        String?
+  fileFormat     String?
+  error          String?
+  requestedBy    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+// ═══════════════ Installations ═══════════════
+
+model Installation {
+  id                  String             @id @default(cuid())
+  organizationId      String
+  vehicleId           String
+  deviceId            String?
+  installerName       String?
+  installerPhone      String?
+  installationDate    DateTime?
+  installationLocation String?
+  notes               String?
+  status              InstallationStatus @default(SCHEDULED)
+  scheduledAt         DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  device       Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+// ═══════════════ Notifications ═══════════════
+
+model Notification {
+  id             String              @id @default(cuid())
+  organizationId String
+  userId         String?
+  type           String              @default("INFO")
+  title          String
+  message        String?
+  channel        NotificationChannel @default(IN_APP)
+  status         NotificationStatus  @default(PENDING)
+  readAt         DateTime?
+  sentAt         DateTime?
+  metadata       Json?
+  createdAt      DateTime            @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+// ═══════════════ Audit + device logs ═══════════════
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String?
+  userId         String?
+  action         String
+  entityType     String?
+  entityId       String?
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([userId])
+  @@index([entityType, entityId])
+}
+
+model DeviceMessageLog {
+  id         String   @id @default(cuid())
+  imei       String?
+  reason     String
+  rawMessage String?
+  createdAt  DateTime @default(now())
+
+  @@index([imei])
+  @@index([createdAt(sort: Desc)])
+}

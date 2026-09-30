@@ -1,0 +1,99 @@
+name: fleet-tracking
+
+x-common-env: &common-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://fleet:${POSTGRES_PASSWORD:-fleet_dev_password}@postgres:5432/fleet_tracking?schema=public
+  REDIS_URL: redis://redis:6379
+  JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access-secret-at-least-32-chars}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh-secret-at-least-32chars}
+  JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+  JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-7d}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  DEVICE_OFFLINE_THRESHOLD_SECONDS: ${DEVICE_OFFLINE_THRESHOLD_SECONDS:-300}
+  TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-365}
+  REPORT_STORAGE_DIR: /app/storage/reports
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet_dev_password}
+      POSTGRES_DB: fleet_tracking
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fleet -d fleet_tracking"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Runs migrations once, then exits. Everything else waits for it.
+  migrate:
+    build: ./backend
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *common-env
+    command: ["sh", "-c", "npx prisma migrate deploy"]
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      PORT: 4000
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      - reportdata:/app/storage/reports
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Consumes the report / notification / device-status / retention queues.
+  # Separate process: the API only enqueues.
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment: *common-env
+    command: ["node", "dist/worker"]
+    volumes:
+      - reportdata:/app/storage/reports
+
+volumes:
+  pgdata:
+  redisdata:
+  reportdata:
